@@ -3,7 +3,7 @@
 # Run in local docker
 
 ## build the image
-docker run -p 8080:10000 go-tiktok-scrapper
+docker build -t go-tiktok-scrapper .
 
 ## run with env params below
 docker run -p 8080:10000 --cap-add=SYS_ADMIN --shm-size=1g go-tiktok-scrapper

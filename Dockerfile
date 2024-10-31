@@ -1,5 +1,23 @@
-# Use the official Golang image as a build stage
-FROM golang:1.23.2-bullseye AS builder
+# Use the official Golang image based on Alpine for the build stage
+FROM golang:1.23.2-alpine AS builder
+
+# Install necessary dependencies for building and running the app
+RUN apk add --no-cache \
+    git \
+    chromium \
+    chromium-chromedriver \
+    nss \
+    freetype \
+    alsa-lib \
+    libx11 \
+    libxcomposite \
+    libxcursor \
+    libxdamage \
+    libxi \
+    libxtst \
+    libxrandr \
+    pango \
+    ttf-freefont
 
 # Set working directory inside the container
 WORKDIR /app
@@ -14,33 +32,32 @@ COPY . .
 # Build the Go app
 RUN go build -o app .
 
-# Use a lightweight image to run the app
-FROM debian:bullseye-slim
+# Create a new stage for running the application
+FROM alpine:latest
 
-# Install Chrome dependencies
-RUN apt-get update && apt-get install -y \
-    curl \
-    libnss3 \
-    libxss1 \
-    libasound2 \
-    libx11-xcb1 \
-    libxcomposite1 \
-    libxcursor1 \
-    libxdamage1 \
-    libxi6 \
-    libxtst6 \
-    libxrandr2 \
-    libpango-1.0-0 \
-    libpangocairo-1.0-0 \
-    libgtk-3-0 \
-    chromium && \
-    rm -rf /var/lib/apt/lists/*
+# Install necessary runtime dependencies
+RUN apk add --no-cache \
+    chromium \
+    nss \
+    freetype \
+    alsa-lib \
+    libx11 \
+    libxcomposite \
+    libxcursor \
+    libxdamage \
+    libxi \
+    libxtst \
+    libxrandr \
+    pango \
+    ttf-freefont
 
-# Copy the binary from the build stage
+# Copy the binary from the builder stage
 COPY --from=builder /app/app /app/app
 
-# Set the working directory and specify the default port
+# Set the working directory
 WORKDIR /app
+
+# Set the environment variable for the port
 ENV PORT=10000
 
 # Expose the port
