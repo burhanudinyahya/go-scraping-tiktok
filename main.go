@@ -11,13 +11,14 @@ import (
 
 func main() {
 	r := mux.NewRouter()
-	r.HandleFunc("/search", handlers.VideoSearch).Methods("GET")
+	r.HandleFunc("/search", handlers.Search).Methods("GET")
 	r.HandleFunc("/video", handlers.VideoDetail).Methods("GET")
+	r.HandleFunc("/stream", handlers.Stream).Methods("GET")
 
 	http.Handle("/", r)
-	port := os.Getenv("PORT") // Render sets this automatically
+	port := os.Getenv("PORT")
 	if port == "" {
-		port = "10000"
+		port = "8000"
 	}
 
 	log.Printf("Starting server on port %s...", port)
