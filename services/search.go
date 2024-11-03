@@ -14,16 +14,8 @@ import (
 
 func fetchVideos(keyword string) ([]models.Video, error) {
 
-	opts := []chromedp.ExecAllocatorOption{
-		chromedp.Flag("headless", true),
-		chromedp.Flag("disable-gpu", true),
-		chromedp.Flag("ignore-certificate-errors", true),
-		chromedp.Flag("user-agent", utils.GetRandomUserAgent()),
-		// chromedp.Flag("proxy-server", utils.GetRandomProxyServers()),
-	}
-
-	allocCtx, cancel := chromedp.NewExecAllocator(context.Background(), opts...)
-	defer cancel()
+	chromeManager := utils.GetChromeManager()
+	allocCtx := chromeManager.GetContext()
 
 	ctx, cancel := chromedp.NewContext(allocCtx)
 	defer cancel()
@@ -34,7 +26,7 @@ func fetchVideos(keyword string) ([]models.Video, error) {
 		}
 	})
 
-	ctx, cancel = context.WithTimeout(ctx, 30*time.Second)
+	ctx, cancel = context.WithTimeout(ctx, 100*time.Second)
 	defer cancel()
 
 	url := "https://www.tiktok.com/search?q=" + keyword

@@ -58,10 +58,10 @@ COPY --from=builder /app/app /app/app
 WORKDIR /app
 
 # Set the environment variable for the port
-ENV PORT=10000
+ENV PORT=8000
 
 # Expose the port
-EXPOSE 10000
+EXPOSE 8000
 
 # Run the app
 CMD ["./app"]

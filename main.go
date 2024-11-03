@@ -23,6 +23,6 @@ func main() {
 
 	log.Printf("Starting server on port %s...", port)
 	if err := http.ListenAndServe(":"+port, nil); err != nil {
-		log.Fatalf("Failed to start server: %v", err)
+		log.Printf("Failed to start server: %v", err)
 	}
 }

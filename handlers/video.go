@@ -4,16 +4,15 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"go-tiktok-scraping/models"
 	"go-tiktok-scraping/services"
 	"go-tiktok-scraping/utils"
 	"io"
 	"log"
 	"net/http"
-	"strings"
 	"sync"
 	"time"
 
-	"github.com/chromedp/cdproto/network"
 	"github.com/chromedp/cdproto/page"
 	"github.com/chromedp/chromedp"
 )
@@ -43,7 +42,7 @@ func VideoDetail(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	videoURL, cookies, err := services.ViewVideoDetail(url)
+	video, err := services.ViewVideoDetail(url)
 	if err != nil {
 		http.Error(w, "Failed to load video content", http.StatusInternalServerError)
 		return
@@ -54,8 +53,8 @@ func VideoDetail(w http.ResponseWriter, r *http.Request) {
 
 	client := &http.Client{}
 
-	req, _ := http.NewRequest("GET", videoURL, nil)
-	req.Header.Set("Cookie", cookies)
+	req, _ := http.NewRequest("GET", video.Src, nil)
+	req.Header.Set("Cookie", video.Cookie)
 
 	rangeHeader := r.Header.Get("Range")
 
@@ -87,7 +86,6 @@ func VideoDetail(w http.ResponseWriter, r *http.Request) {
 	io.CopyN(w, resp.Body, end-start+1)
 }
 
-// Handler function to send chunked data
 func Stream(w http.ResponseWriter, r *http.Request) {
 	keyword := r.URL.Query().Get("q")
 	if keyword == "" {
@@ -102,125 +100,104 @@ func Stream(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Set headers for chunked response
 	w.Header().Set("Content-Type", "application/json")
 	w.Header().Set("Access-Control-Allow-Origin", "*")
 	w.Header().Set("Transfer-Encoding", "chunked")
 
-	// Set up Chromedp options
-	opts := []chromedp.ExecAllocatorOption{
-		chromedp.Flag("headless", true),
-		chromedp.Flag("disable-gpu", true),
-		chromedp.Flag("ignore-certificate-errors", true),
-		chromedp.Flag("user-agent", utils.GetRandomUserAgent()),
-	}
-
-	allocCtx, cancel := chromedp.NewExecAllocator(context.Background(), opts...)
-	defer cancel()
+	chromeManager := utils.GetChromeManager()
+	allocCtx := chromeManager.GetContext()
 
 	ctx, cancel := chromedp.NewContext(allocCtx)
 	defer cancel()
 
-	// Ignore unnecessary events to avoid spamming logs
 	chromedp.ListenTarget(ctx, func(ev interface{}) {
 		if _, ok := ev.(*page.EventFrameSubtreeWillBeDetached); ok {
 			log.Println("Ignoring frame detach event...")
 		}
 	})
 
-	// Set a timeout for the entire context
-	ctx, cancel = context.WithTimeout(ctx, 30*time.Second)
+	ctx, cancel = context.WithTimeout(ctx, 100*time.Second)
 	defer cancel()
 
 	url := "https://www.tiktok.com/search?q=" + keyword
 	log.Println("Navigating to:", url)
+	startUrl := time.Now()
 
-	// Check if selector is available
 	selector := `div[data-e2e="search_top-item"]`
 	var links []string
 	err := chromedp.Run(ctx,
 		chromedp.Navigate(url),
 		chromedp.WaitVisible(selector, chromedp.ByQuery),
+		scrollAndLoadMoreContent(0),
 		chromedp.Evaluate(`Array.from(document.querySelectorAll('div[data-e2e="search_top-item"] a')).map(m=>m.href)`, &links),
 	)
 	if err != nil {
 		log.Println("Failed to retrieve links:", err)
 		return
 	}
+	log.Println("Total url:", len(links))
+	elapsedUrl := time.Since(startUrl)
+	fmt.Printf("Get all url time: %s\n", elapsedUrl)
 
-	// Prepare for chunked response with goroutines
-	chunks := make(chan string)
+	chunks := make(chan models.Video)
+	linksChan := make(chan string)
+
+	// Create a limited number of workers
+	const concurrentWorkers = 3
 	var wg sync.WaitGroup
 
-	// Variables to hold scraped data
-	var videoSrc, coverSrc string
-	var cookies []*network.Cookie
-
-	// Start goroutines to process each link
-	for _, link := range links {
-		wg.Add(1)
-		go func(link string) {
-			defer wg.Done()
-
-			// Run Chromedp commands and check for errors
-			err := chromedp.Run(ctx,
-				network.Enable(),
-				chromedp.Navigate(link),
-				chromedp.ActionFunc(func(ctx context.Context) error {
-					var err error
-					cookies, err = network.GetCookies().Do(ctx)
-					return err
-				}),
-				chromedp.WaitVisible(`video`, chromedp.ByQuery),
-				chromedp.AttributeValue(`video > source`, "src", &videoSrc, nil),
-			)
+	// Worker function
+	worker := func() {
+		defer wg.Done()
+		for link := range linksChan {
+			startDetail := time.Now()
+			video, err := services.ViewVideoDetail(link)
+			elapsedDetail := time.Since(startDetail)
+			fmt.Printf("Get video detail time: %s\n", elapsedDetail)
 			if err != nil {
 				log.Println("Error retrieving video source for link:", link, "Error:", err)
-				return // Skip sending this chunk due to error
+				continue
 			}
-
-			// Convert cookies to a single string format
-			cookieStrings := make([]string, len(cookies))
-			for i, cookie := range cookies {
-				cookieStrings[i] = fmt.Sprintf("%s=%s", cookie.Name, cookie.Value)
-			}
-			cookiesJoined := strings.Join(cookieStrings, "; ")
-
-			// Format chunk data only if chromedp.Run succeeded
-			chunk := fmt.Sprintf(`{
-				"id": "%s",
-				"title": "%s",
-				"tags": [%s],
-				"url": "%s",
-				"cover": "%s",
-				"src": "%s",
-				"username": "%s",
-				"cookies": "%s"
-			}`,
-				utils.GetID(link),
-				"", // Title placeholder
-				strings.Join(utils.ExtractTags(link), ", "),
-				videoSrc,
-				coverSrc,
-				videoSrc,
-				utils.GetUsername(link),
-				cookiesJoined,
-			)
-
-			// Send chunk to channel only if no error occurred
-			chunks <- chunk
-		}(link)
+			chunks <- video
+		}
 	}
 
-	// Close channel after all goroutines complete
+	// Start workers
+	for i := 0; i < concurrentWorkers; i++ {
+		wg.Add(1)
+		go worker()
+	}
+
+	// Send links to workers
+	go func() {
+		for _, link := range links {
+			linksChan <- link
+		}
+		close(linksChan) // Close the channel after sending all URLs
+	}()
+
+	// Wait for workers to finish and close chunks
 	go func() {
 		wg.Wait()
 		close(chunks)
 	}()
 
-	// Stream each chunk to the client as it arrives
+	// Stream results
 	for chunk := range chunks {
-		fmt.Fprintf(w, "%s\n", chunk)
-		flusher.Flush() // Flush to send chunk to client immediately
+		json.NewEncoder(w).Encode(chunk)
+		flusher.Flush()
 	}
+}
+
+func scrollAndLoadMoreContent(scrolls int) chromedp.Action {
+	return chromedp.ActionFunc(func(ctx context.Context) error {
+		for i := 0; i < scrolls; i++ {
+			err := chromedp.Run(ctx, chromedp.Evaluate(`window.scrollTo(0, document.body.scrollHeight);`, nil))
+			if err != nil {
+				return err
+			}
+			time.Sleep(2 * time.Second)
+		}
+		return nil
+	})
 }
